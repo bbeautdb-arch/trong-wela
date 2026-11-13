@@ -1,0 +1,23 @@
+// ทดสอบกรณีฝังลิงก์บันทึกกลางตอน build (ใช้: BASE=http://localhost:4174/trong-wela/ node tests/baked.mjs)
+import { chromium } from 'playwright'
+const BASE = process.env.BASE ?? 'http://localhost:4174/trong-wela/'
+const b = await chromium.launch({ args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] })
+const ctx = await b.newContext({ viewport: { width: 390, height: 844 }, permissions: ['camera', 'geolocation'], geolocation: { latitude: 14.7995, longitude: 102.1597, accuracy: 12 }, locale: 'th-TH' })
+const posts = []
+await ctx.route('https://nominatim.openstreetmap.org/**', (r) => r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"address":{"road":"x"}}' }))
+await ctx.route('https://script.google.com/macros/s/TESTDEPLOY/exec**', (r) => { if (r.request().method() === 'POST') posts.push(JSON.parse(r.request().postData() ?? '{}')); r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: '{"ok":true}' }) })
+const page = await ctx.newPage()
+await page.goto(BASE + '?admin=1')
+const adminText = await page.locator('.sheet, [role=dialog]').first().innerText().catch(() => '')
+const ls = await page.evaluate(() => localStorage.getItem('trongwela.logUrl'))
+console.log('ข้อความในหน้าตั้งค่า:', adminText.replace(/\s+/g, ' ').slice(0, 200))
+console.log('localStorage URL:', ls)
+await page.goto(BASE)
+await page.waitForFunction(() => !document.querySelector('.shutter')?.disabled, null, { timeout: 20000 })
+await page.fill('#f-name', 'ทดสอบ'); await page.fill('#f-place', 'ที่'); await page.fill('#f-task', 'งาน')
+await page.locator('.shutter').click()
+await page.waitForSelector('.photo img', { timeout: 30000 })
+for (let i = 0; i < 20 && !posts.length; i++) await page.waitForTimeout(250)
+const ok = posts.length === 1 && ls === null && /ไว้ในแอปแล้ว/.test(adminText)
+console.log(ok ? 'PASS' : 'FAIL', 'posts=', posts.length, posts[0]?.code)
+await b.close(); process.exit(ok ? 0 : 1)
